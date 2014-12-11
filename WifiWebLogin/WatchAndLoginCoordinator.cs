@@ -5,26 +5,26 @@ using System.Linq;
 using System.Net.Http;
 using System.Threading;
 using System.Threading.Tasks;
-using System.Windows.Documents;
 
 namespace WifiWebLogin
 {
     public class WatchAndLoginCoordinator
     {
-        private readonly List<WifiLogin> _wifiLogins;
+        private readonly WifiLoginConfig _config;
         private readonly Task _runningTask;
         private readonly CancellationTokenSource _cancellationTokenSource = new CancellationTokenSource();
 
-        public WatchAndLoginCoordinator(List<WifiLogin> wifiLogins)
+        public WatchAndLoginCoordinator(WifiLoginConfig config)
         {
-            _wifiLogins = wifiLogins;
-            if (wifiLogins == null) throw new ArgumentNullException("wifiLogins");
+            _config = config;
+            if (config == null) throw new ArgumentNullException("config");
             _runningTask = WatchInBackground(_cancellationTokenSource.Token);
         }
 
         public void Stop()
         {
             _cancellationTokenSource.Cancel();
+            _runningTask.Wait();
         }
 
         public bool IsRunning()
@@ -39,7 +39,7 @@ namespace WifiWebLogin
                 var requiredLogin = await IsLoginRequired(token);
                 if (null != requiredLogin)
                 {
-                    await PerformLogin(token);
+                    await PerformLogin(requiredLogin, token);
                 }
                 else
                 {
@@ -60,20 +60,23 @@ namespace WifiWebLogin
             await Task.Delay(TimeSpan.FromSeconds(10), token);
         }
 
-        private async Task PerformLogin(CancellationToken token)
+        private async Task PerformLogin(WifiLogin requiredLogin, CancellationToken token)
         {
             DebugWriteLine("Performing Login...");
             var client = new HttpClient();
-            var postResult = await client.PostAsync("https://***/login.html",
+            //TODO: somehow we need to get to know this stuff in a generic way
+            var loginUrl = "https://" + requiredLogin.RedirectHost + "/login.html";
+            var postResult = await client.PostAsync(loginUrl,
                 new FormUrlEncodedContent(new List<KeyValuePair<string, string>>
                 {
+                    //TODO: somehow we need to get to know this stuff in a generic way
                     new KeyValuePair<string, string>("buttonClicked", "4"),
                     new KeyValuePair<string, string>("redirect_url", "www.google.de/"),
                     new KeyValuePair<string, string>("err_flag", "0"),
                     new KeyValuePair<string, string>("info_flag", "0"),
                     new KeyValuePair<string, string>("info_msg", "0"),
-                    new KeyValuePair<string, string>("username", "***"),
-                    new KeyValuePair<string, string>("password", "***"),
+                    new KeyValuePair<string, string>("username", requiredLogin.Username),
+                    new KeyValuePair<string, string>("password", requiredLogin.Password),
                 }), token);
 
             postResult.EnsureSuccessStatusCode();
@@ -94,7 +97,8 @@ namespace WifiWebLogin
 
                 DebugWriteLine("Login is required!");
 
-                var requiredLogin = _wifiLogins
+                var requiredLogin = _config
+                    .Logins
                     .Where(l => l.DetectionType == DetectionTypeEnum.DetectByRedirect)
                     .FirstOrDefault(login => String.Equals(login.RedirectHost, result.Headers.Location.Host, StringComparison.OrdinalIgnoreCase));
 
